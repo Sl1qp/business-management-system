@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Business Management System{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+<script>
+    function authFetch(url, options = {}) {
+        const token = localStorage.getItem('access_token');
+        if (token) {
+            options.headers = {
+                ...options.headers,
+                'Authorization': `Bearer ${token}`
+            };
+        }
+        return fetch(url, options);
+    }
+
+    async function checkAuth() {
+        const token = localStorage.getItem('access_token');
+        if (token) {
+            try {
+                const response = await authFetch('/auth/me');
+                if (response.ok) {
+                    const user = await response.json();
+                    updateNavigation(user);
+                    return true;
+                } else {
+                    localStorage.removeItem('access_token');
+                    window.location.href = '/auth/login';
+                    return false;
+                }
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                localStorage.removeItem('access_token');
+                window.location.href = '/auth/login';
+                return false;
+            }
+        } else {
+            window.location.href = '/auth/login';
+            return false;
+        }
+    }
+
+    function updateNavigation(user) {
+        const authElements = document.querySelectorAll('.auth-only');
+        const unauthElements = document.querySelectorAll('.unauth-only');
+
+        if (user) {
+            authElements.forEach(el => el.style.display = 'block');
+            unauthElements.forEach(el => el.style.display = 'none');
+        } else {
+            authElements.forEach(el => el.style.display = 'none');
+            unauthElements.forEach(el => el.style.display = 'block');
+        }
+    }
+
+    async function logout() {
+        try {
+            const response = await authFetch('/auth/jwt/logout', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                localStorage.removeItem('access_token');
+                window.location.href = '/auth/login';
+            }
+        } catch (error) {
+            console.error('Error during logout:', error);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        const token = localStorage.getItem('access_token');
+        if (token && window.location.pathname !== '/auth/login') {
+            await checkAuth();
+        }
+    });
+</script>
+</head>
+<body>
+    <nav>
+        <ul>
+            <li><a href="/">Главная</a></li>
+            <li class="auth-only" style="display: none;"><a href="/tasks">Задачи</a></li>
+            <li class="auth-only" style="display: none;"><a href="/teams">Команды</a></li>
+            <li class="auth-only" style="display: none;"><a href="/meetings">Встречи</a></li>
+            <li class="auth-only" style="display: none;"><a href="/calendar">Календарь</a></li>
+            <li class="auth-only" style="display: none;"><a href="/evaluations">Оценки</a></li>
+            <li class="auth-only" style="display: none;"><a href="#" onclick="logout(); return false;">Выход</a></li>
+            <li class="unauth-only"><a href="/auth/login">Вход</a></li>
+            <li class="unauth-only"><a href="/auth/register">Регистрация</a></li>
+        </ul>
+    </nav>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Вход в систему</h2>
+<form id="loginForm">
+    <div>
+        <label for="email">Email:</label>
+        <input type="email" id="email" name="username" required>
+    </div>
+    <div>
+        <label for="password">Пароль:</label>
+        <input type="password" id="password" name="password" required>
+    </div>
+    <button type="submit">Войти</button>
+</form>
+<p>Нет аккаунта? <a href="/auth/register">Зарегистрируйтесь</a></p>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+    const loginData = {
+        username: formData.get('username'),
+        password: formData.get('password')
+    };
+
+    try {
+        const response = await fetch('/auth/jwt/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams(loginData)
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            localStorage.setItem('access_token', data.access_token);
+            alert('Вход выполнен успешно!');
+            window.location.href = '/'; // Перенаправляем на главную страницу
+        } else {
+            const error = await response.json();
+            alert(`Ошибка входа: ${error.detail}`);
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка при входе');
+    }
+});
+</script>
+{% endblock %}

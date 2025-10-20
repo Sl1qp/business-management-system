@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/tasks.css">
+
+<h2>Управление задачами</h2>
+
+<div>
+    <h3>Мои задачи</h3>
+
+    <div style="margin-bottom: 20px;">
+        <select id="task-filter" onchange="loadTasks()">
+            <option value="all">Все задачи</option>
+            <option value="open">Открытые</option>
+            <option value="in_progress">В процессе</option>
+            <option value="completed">Завершенные</option>
+        </select>
+
+        <select id="task-sort" onchange="loadTasks()">
+            <option value="newest">Сначала новые</option>
+            <option value="oldest">Сначала старые</option>
+            <option value="deadline">По дедлайну</option>
+            <option value="priority">По приоритету</option>
+        </select>
+    </div>
+
+    <div id="tasks-list">
+    </div>
+
+    <div id="pagination" style="margin-top: 20px; display: flex; justify-content: center;">
+        <button id="prev-page" onclick="changePage(-1)">← Предыдущая</button>
+        <span id="page-info" style="margin: 0 15px;"></span>
+        <button id="next-page" onclick="changePage(1)">Следующая →</button>
+    </div>
+
+    <button onclick="showCreateTaskForm()" style="margin-top: 20px;">Создать новую задачу</button>
+
+    <div id="create-task-form" style="display: none; margin-top: 20px;">
+        <h4>Создать задачу</h4>
+        <form id="create-task">
+            <div>
+                <label for="task-title">Название задачи:</label>
+                <input type="text" id="task-title" name="title" required>
+            </div>
+            <div>
+                <label for="task-description">Описание:</label>
+                <textarea id="task-description" name="description"></textarea>
+            </div>
+            <div>
+                <label for="task-team">Команда:</label>
+                <select id="task-team" name="team_id" required>
+                </select>
+            </div>
+            <div>
+                <label for="task-assignee">Исполнитель (опционально):</label>
+                <select id="task-assignee" name="assignee_id">
+                    <option value="">Не назначено</option>
+                </select>
+            </div>
+            <div>
+                <label for="task-deadline">Дедлайн:</label>
+                <input type="datetime-local" id="task-deadline" name="deadline">
+            </div>
+            <button type="submit">Создать</button>
+            <button type="button" onclick="hideCreateTaskForm()">Отмена</button>
+        </form>
+    </div>
+</div>
+
+<script>
+    const tasksConfig = {
+        currentPage: {{ page }},
+        perPage: {{ per_page }}
+    };
+</script>
+<script src="/static/js/tasks.js"></script>
+{% endblock %}

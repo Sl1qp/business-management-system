@@ -1,0 +1,170 @@
+.task-item {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.task-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.task-header h4 {
+    margin: 0;
+    color: #333;
+}
+
+.task-status {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.status-open {
+    background-color: #e3f2fd;
+    color: #1976d2;
+}
+
+.status-in-progress {
+    background-color: #fff3e0;
+    color: #f57c00;
+}
+
+.status-completed {
+    background-color: #e8f5e9;
+    color: #388e3c;
+}
+
+.task-description {
+    color: #666;
+    margin-bottom: 15px;
+}
+
+.task-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.task-detail {
+    font-size: 14px;
+}
+
+.task-detail strong {
+    color: #333;
+}
+
+.overdue {
+    color: #d32f2f;
+    font-weight: bold;
+}
+
+.task-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.task-actions a,
+.task-actions button {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.task-actions a {
+    background-color: #1976d2;
+    color: white;
+}
+
+.task-actions button {
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    color: #333;
+}
+
+.task-actions button:hover {
+    background-color: #e0e0e0;
+}
+
+#pagination {
+    margin-top: 20px;
+}
+
+#pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#task-filter,
+#task-sort {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    margin-right: 10px;
+}
+
+#create-task-form {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    background-color: #f9f9f9;
+}
+
+#create-task-form h4 {
+    margin-top: 0;
+    color: #333;
+}
+
+#create-task-form label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #333;
+}
+
+#create-task-form input,
+#create-task-form select,
+#create-task-form textarea {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+#create-task-form textarea {
+    height: 100px;
+    resize: vertical;
+}
+
+#create-task-form button {
+    padding: 10px 20px;
+    margin-right: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#create-task-form button[type="submit"] {
+    background-color: #1976d2;
+    color: white;
+}
+
+#create-task-form button[type="button"] {
+    background-color: #6c757d;
+    color: white;
+}
+
+#create-task-form button:hover {
+    opacity: 0.9;
+}

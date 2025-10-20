@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/teams.css">
+
+<h2>Управление командами</h2>
+
+<div>
+    <h3>Мои команды</h3>
+    <div id="teams-list">
+    </div>
+
+    <button onclick="showCreateTeamForm()" class="btn btn-primary">Создать новую команду</button>
+
+    <div id="create-team-form" style="display: none; margin-top: 20px;">
+        <h4>Создать команду</h4>
+        <form id="create-team">
+            <div>
+                <label for="team-name">Название команды:</label>
+                <input type="text" id="team-name" name="name" required>
+            </div>
+            <div>
+                <label for="team-description">Описание:</label>
+                <textarea id="team-description" name="description"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Создать</button>
+            <button type="button" class="btn btn-secondary" onclick="hideCreateTeamForm()">Отмена</button>
+        </form>
+    </div>
+</div>
+
+<div style="margin-top: 30px;">
+    <h3>Присоединиться к команде</h3>
+    <form id="join-team">
+        <div>
+            <label for="invite-code">Код приглашения:</label>
+            <input type="text" id="invite-code" name="invite_code" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Присоединиться</button>
+    </form>
+</div>
+
+<script src="/static/js/teams.js"></script>
+{% endblock %}

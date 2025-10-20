@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Добро пожаловать в Business Management System!</h1>
+<p>Вы успешно вошли в систему.</p>
+
+<div class="dashboard-links">
+    <a href="/tasks" class="btn">Управление задачами</a>
+    <a href="/teams" class="btn">Управление командами</a>
+    <a href="/meetings" class="btn">Управление встречами</a>
+    <a href="/calendar" class="btn">Календарь</a>
+    <a href="/evaluations" class="btn">Оценки</a>
+</div>
+{% endblock %}

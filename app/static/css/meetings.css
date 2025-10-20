@@ -1,0 +1,159 @@
+.meeting-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.meeting-item {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+    background-color: #fff;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.meeting-item:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.meeting-item.meeting-past {
+    opacity: 0.7;
+    background-color: #f8f9fa;
+}
+
+.meeting-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.meeting-title {
+    margin: 0;
+    color: #333;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.meeting-status {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-upcoming {
+    background-color: #e3f2fd;
+    color: #1976d2;
+}
+
+.status-past {
+    background-color: #f5f5f5;
+    color: #757575;
+}
+
+.meeting-description {
+    color: #666;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.meeting-details {
+    margin-bottom: 16px;
+}
+
+.meeting-time {
+    color: #333;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.meeting-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 0.875rem;
+    color: #666;
+}
+
+.meeting-meta span {
+    display: inline-block;
+}
+
+.meeting-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.meeting-actions .btn {
+    font-size: 0.875rem;
+    padding: 6px 12px;
+}
+
+.meeting-actions .btn-danger {
+    border-color: #dc3545;
+    color: #dc3545;
+}
+
+.meeting-actions .btn-danger:hover {
+    background-color: #dc3545;
+    color: white;
+}
+
+.modal-content {
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.modal-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 8px 8px 0 0;
+}
+
+.modal-title {
+    color: #333;
+    font-weight: 600;
+}
+
+.form-check {
+    margin-bottom: 8px;
+    padding-left: 0;
+}
+
+.form-check-input {
+    margin-right: 8px;
+}
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+@media (max-width: 768px) {
+    .meeting-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .meeting-meta {
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .meeting-actions {
+        flex-wrap: wrap;
+    }
+}

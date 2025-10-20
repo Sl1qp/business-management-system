@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/meetings.css">
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Встречи</h1>
+        <button class="btn btn-primary" onclick="showCreateMeetingForm()">
+            Создать встречу
+        </button>
+    </div>
+
+    <div id="create-meeting-form" style="display: none; margin-top: 20px;">
+        <div class="card meeting-card">
+            <div class="card-header">
+                <h4>Создать встречу</h4>
+            </div>
+            <div class="card-body">
+                <form id="create-meeting">
+                    <div class="mb-3">
+                        <label for="meeting-title" class="form-label">Название встречи:</label>
+                        <input type="text" class="form-control" id="meeting-title" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="meeting-description" class="form-label">Описание:</label>
+                        <textarea class="form-control" id="meeting-description" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="meeting-start" class="form-label">Начало:</label>
+                            <input type="datetime-local" class="form-control" id="meeting-start" name="start_time" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="meeting-end" class="form-label">Окончание:</label>
+                            <input type="datetime-local" class="form-control" id="meeting-end" name="end_time" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="meeting-team" class="form-label">Команда:</label>
+                        <select class="form-select" id="meeting-team" name="team_id" required onchange="loadTeamMembers(this.value)">
+                            <option value="">Выберите команду</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Участники:</label>
+                        <div id="participants-list" class="border p-3" style="max-height: 200px; overflow-y: auto;">
+                            <p class="text-muted">Выберите команду для загрузки участников</p>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">Создать</button>
+                        <button type="button" class="btn btn-secondary" onclick="hideCreateMeetingForm()">Отмена</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="card meeting-card">
+        <div class="card-body">
+            <div class="mb-3">
+                <select id="meeting-filter" class="form-select" onchange="loadMeetings()" style="max-width: 200px;">
+                    <option value="all">Все встречи</option>
+                    <option value="upcoming">Предстоящие</option>
+                    <option value="past">Прошедшие</option>
+                </select>
+            </div>
+
+            <div id="meetings-list">
+                <div class="text-center py-4">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2">Загрузка встреч...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/meetings.js"></script>
+{% endblock %}

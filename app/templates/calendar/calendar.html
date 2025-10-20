@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Календарь - Business Management System{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="static/css/calendar.css">
+
+<div class="calendar-container">
+    <div class="calendar-header">
+        <h1>Календарь</h1>
+
+        <div class="calendar-controls">
+            <div class="view-switcher">
+                <a href="?view=month&year={{ year }}&month={{ month }}"
+                   class="btn {% if view == 'month' %}btn-primary{% else %}btn-secondary{% endif %}">
+                    Месяц
+                </a>
+                <a href="?view=day&year={{ year }}&month={{ month }}&day={{ day }}"
+                   class="btn {% if view == 'day' %}btn-primary{% else %}btn-secondary{% endif %}">
+                    День
+                </a>
+            </div>
+
+            <div class="navigation">
+                {% if view == 'month' %}
+                    <a href="?view=month&year={{ year-1 if month == 1 else year }}&month={{ 12 if month == 1 else month-1 }}"
+                       class="btn btn-outline">← Пред</a>
+                    <span class="current-period">{{ year }} - {{ month | month_name }}</span>
+                    <a href="?view=month&year={{ year+1 if month == 12 else year }}&month={{ 1 if month == 12 else month+1 }}"
+                       class="btn btn-outline">След →</a>
+                {% else %}
+                    {% set prev_day = now - timedelta(days=1) %}
+                    {% set next_day = now + timedelta(days=1) %}
+                    <a href="?view=day&year={{ prev_day.year }}&month={{ prev_day.month }}&day={{ prev_day.day }}"
+                       class="btn btn-outline">← Пред</a>
+                    <span class="current-period">{{ day }} {{ month | month_name }} {{ year }}</span>
+                    <a href="?view=day&year={{ next_day.year }}&month={{ next_day.month }}&day={{ next_day.day }}"
+                       class="btn btn-outline">След →</a>
+                {% endif %}
+
+                <a href="?view={{ view }}&year={{ now.year }}&month={{ now.month }}{% if view == 'day' %}&day={{ now.day }}{% endif %}"
+                   class="btn btn-outline">Сегодня</a>
+            </div>
+        </div>
+    </div>
+
+    <div id="calendar-content">
+        <p>Загрузка календаря...</p>
+    </div>
+</div>
+
+<script>
+    const calendarConfig = {
+        currentView: '{{ view }}',
+        currentYear: {{ year }},
+        currentMonth: {{ month }},
+        currentDay: {{ day }}
+    };
+</script>
+<script src="static/js/calendar.js"></script>
+{% endblock %}

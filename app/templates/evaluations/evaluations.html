@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/evaluations.css">
+
+<div class="container">
+    <h1>Список оценок</h1>
+
+    <div class="create-evaluation-form">
+        <h3>Создать новую оценку</h3>
+        <form id="createEvaluationForm">
+            <div class="form-group">
+                <label for="taskSelect">Задача:</label>
+                <select id="taskSelect" name="task_id" required>
+                    <option value="">Выберите задачу</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="userSelect">Оцениваемый пользователь:</label>
+                <select id="userSelect" name="user_id" required>
+                    <option value="">Выберите пользователя</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="ratingInput">Оценка (1-5):</label>
+                <input type="number" id="ratingInput" name="rating" min="1" max="5" required>
+            </div>
+
+            <div class="form-group">
+                <label for="commentTextarea">Комментарий:</label>
+                <textarea id="commentTextarea" name="comment" rows="3"></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Создать оценку</button>
+        </form>
+    </div>
+
+    <div id="evaluations-container">
+        <p>Загрузка оценок...</p>
+    </div>
+</div>
+
+<script src="/static/js/evaluations.js"></script>
+{% endblock %}
