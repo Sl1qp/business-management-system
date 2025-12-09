@@ -5,11 +5,13 @@ from app.models.meeting import Meeting, MeetingParticipant
 
 
 async def get_meeting_by_id(db: AsyncSession, meeting_id: int):
+    """Получает встречу по ID без загрузки связанных данных"""
     result = await db.execute(select(Meeting).filter(Meeting.id == meeting_id))
     return result.scalar_one_or_none()
 
 
 async def is_meeting_organizer(db: AsyncSession, user_id: int, meeting_id: int):
+    """Проверяет, является ли пользователь организатором встречи"""
     result = await db.execute(
         select(Meeting).filter(
             Meeting.id == meeting_id,
@@ -20,6 +22,7 @@ async def is_meeting_organizer(db: AsyncSession, user_id: int, meeting_id: int):
 
 
 async def is_meeting_participant(db: AsyncSession, user_id: int, meeting_id: int):
+    """Проверяет, является ли пользователь участником встречи"""
     result = await db.execute(
         select(MeetingParticipant).filter(
             MeetingParticipant.meeting_id == meeting_id,

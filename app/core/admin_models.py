@@ -17,6 +17,7 @@ class UserAdmin(ModelView, model=User):
         User.email,
         User.first_name,
         User.last_name,
+        User.role,
         User.is_active,
         User.is_superuser,
         User.is_verified,
@@ -26,7 +27,7 @@ class UserAdmin(ModelView, model=User):
     column_searchable_list = [User.email, User.first_name, User.last_name]
 
     form_columns = [
-        'email', 'first_name', 'last_name',
+        'email', 'first_name', 'last_name', 'role',
         'is_active', 'is_superuser', 'is_verified'
     ]
 

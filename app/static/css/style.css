@@ -205,3 +205,73 @@ button:hover, .btn:hover {
         grid-template-columns: 1fr;
     }
 }
+
+nav ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.user-info {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.user-name {
+    color: #fff;
+    font-weight: 500;
+    font-size: 15px;
+}
+
+.user-role {
+    color: #ccc;
+    font-size: 14px;
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: capitalize;
+}
+
+.logout-btn {
+    color: #fff;
+    text-decoration: none;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 5px 10px;
+    transition: all 0.3s ease;
+}
+
+.logout-btn:hover {
+    color: #ddd;
+}
+
+#logout-btn {
+    margin-left: 10px;
+}
+
+@media (max-width: 768px) {
+    nav ul {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .user-info {
+        order: 2;
+        width: 100%;
+        justify-content: center;
+        margin-left: 0;
+        margin-top: 0.5rem;
+    }
+
+    #logout-btn {
+        order: 3;
+        width: 100%;
+        text-align: center;
+        margin-left: 0;
+        margin-top: 0.5rem;
+    }
+}

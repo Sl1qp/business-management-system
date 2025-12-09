@@ -11,13 +11,22 @@ from starlette.responses import HTMLResponse
 from app.core.auth import current_active_user
 from app.core.database import get_async_session
 from app.core.templates import templates
+from app.models import UserTeam
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import MeetingCreate, MeetingRead, MeetingUpdate
-from app.utils.meetings import get_meeting_by_id, is_meeting_organizer, is_meeting_participant
+from app.utils.meetings import is_meeting_organizer
 from app.utils.teams import get_user_team_role
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
+
+
+def load_meeting_relationships(query):
+    return query.options(
+        selectinload(Meeting.organizer),
+        selectinload(Meeting.team),
+        selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
+    )
 
 
 @router.get("", response_class=HTMLResponse)
@@ -43,24 +52,12 @@ async def get_meetings_list(
         db: AsyncSession = Depends(get_async_session)
 ):
     try:
-        from sqlalchemy import distinct
-        from datetime import datetime
-
-        meeting_ids_query = select(distinct(MeetingParticipant.meeting_id)).filter(
-            MeetingParticipant.user_id == user.id
+        query = load_meeting_relationships(
+            select(Meeting)
+            .join(MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id)
+            .filter(MeetingParticipant.user_id == user.id)
+            .distinct()
         )
-
-        meeting_ids_result = await db.execute(meeting_ids_query)
-        meeting_ids = meeting_ids_result.scalars().all()
-
-        if not meeting_ids:
-            return []
-
-        query = select(Meeting).options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team),
-            selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
-        ).filter(Meeting.id.in_(meeting_ids))
 
         now = datetime.utcnow()
         if filter == "upcoming":
@@ -91,12 +88,22 @@ async def create_meeting(
     if meeting_data.end_time <= meeting_data.start_time:
         raise HTTPException(status_code=400, detail="End time must be after start time")
 
-    for participant_id in meeting_data.participant_ids:
-        participant_role = await get_user_team_role(db, participant_id, meeting_data.team_id)
-        if not participant_role:
-            raise HTTPException(status_code=400, detail=f"User {participant_id} is not a member of this team")
+    if meeting_data.participant_ids:
+        participants_query = select(UserTeam.user_id).filter(
+            UserTeam.team_id == meeting_data.team_id,
+            UserTeam.user_id.in_(meeting_data.participant_ids)
+        )
+        participants_result = await db.execute(participants_query)
+        valid_participant_ids = {row[0] for row in participants_result.all()}
 
-    conflict_errors = await check_meeting_time_conflicts(
+        invalid_participants = set(meeting_data.participant_ids) - valid_participant_ids
+        if invalid_participants:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Users {invalid_participants} are not members of this team"
+            )
+
+    conflict_errors = await check_meeting_time_conflicts_optimized(
         db, meeting_data, user.id, meeting_data.participant_ids
     )
     if conflict_errors:
@@ -117,29 +124,18 @@ async def create_meeting(
     db.add(meeting)
     await db.flush()
 
-    for participant_id in meeting_data.participant_ids:
-        participant = MeetingParticipant(
-            meeting_id=meeting.id,
-            user_id=participant_id
-        )
-        db.add(participant)
+    all_participant_ids = set(meeting_data.participant_ids + [user.id])
 
-    organizer_participant = MeetingParticipant(
-        meeting_id=meeting.id,
-        user_id=user.id
-    )
-    db.add(organizer_participant)
+    participants = [
+        MeetingParticipant(meeting_id=meeting.id, user_id=participant_id)
+        for participant_id in all_participant_ids
+    ]
+    db.add_all(participants)
 
     await db.commit()
 
     result = await db.execute(
-        select(Meeting)
-        .options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team),
-            selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
-        )
-        .where(Meeting.id == meeting.id)
+        load_meeting_relationships(select(Meeting).where(Meeting.id == meeting.id))
     )
     meeting_with_relations = result.scalar_one()
 
@@ -156,7 +152,11 @@ async def update_meeting(
     if not await is_meeting_organizer(db, user.id, meeting_id):
         raise HTTPException(status_code=403, detail="Only meeting organizer can update meeting")
 
-    meeting = await get_meeting_by_id(db, meeting_id)
+    result = await db.execute(
+        load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
+    )
+    meeting = result.scalar_one_or_none()
+
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
@@ -176,18 +176,14 @@ async def update_meeting(
     if meeting.end_time <= meeting.start_time:
         raise HTTPException(status_code=400, detail="End time must be after start time")
 
-    current_participants_result = await db.execute(
-        select(MeetingParticipant.user_id)
-        .filter(MeetingParticipant.meeting_id == meeting_id)
-    )
-    current_participant_ids = [row[0] for row in current_participants_result.all()]
+    current_participant_ids = [p.user_id for p in meeting.participants]
 
     participant_ids_to_check = current_participant_ids
     if meeting_data.participant_ids is not None:
         participant_ids_to_check = meeting_data.participant_ids + [user.id]
 
     if meeting_data.start_time is not None or meeting_data.end_time is not None or meeting_data.participant_ids is not None:
-        conflict_errors = await check_meeting_time_conflicts(
+        conflict_errors = await check_meeting_time_conflicts_optimized(
             db, meeting_data, user.id, participant_ids_to_check, exclude_meeting_id=meeting_id
         )
         if conflict_errors:
@@ -197,96 +193,96 @@ async def update_meeting(
             )
 
     if meeting_data.participant_ids is not None:
+        from app.models.meeting import MeetingParticipant
         await db.execute(
             MeetingParticipant.__table__.delete()
             .where(MeetingParticipant.meeting_id == meeting_id)
             .where(MeetingParticipant.user_id != user.id)
         )
 
-        for participant_id in meeting_data.participant_ids:
-            if participant_id == user.id:
-                continue
-
-            participant = MeetingParticipant(
-                meeting_id=meeting_id,
-                user_id=participant_id
-            )
-            db.add(participant)
+        new_participants = [
+            MeetingParticipant(meeting_id=meeting_id, user_id=participant_id)
+            for participant_id in meeting_data.participant_ids
+            if participant_id != user.id
+        ]
+        if new_participants:
+            db.add_all(new_participants)
 
     meeting.updated_at = datetime.utcnow()
     await db.commit()
 
     result = await db.execute(
-        select(Meeting)
-        .options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team),
-            selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
-        )
-        .where(Meeting.id == meeting_id)
+        load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
     )
     updated_meeting = result.scalar_one()
 
     return updated_meeting
 
 
-async def check_meeting_time_conflicts(
+async def check_meeting_time_conflicts_optimized(
         db: AsyncSession,
         meeting_data: MeetingCreate,
         organizer_id: int,
         participant_ids: List[int],
         exclude_meeting_id: int = None
 ) -> List[str]:
-    errors = []
+    from app.models.meeting import Meeting, MeetingParticipant
 
     all_participants = set(participant_ids + [organizer_id])
 
-    for participant_id in all_participants:
-        query = select(Meeting).join(
-            MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id
-        ).filter(
-            MeetingParticipant.user_id == participant_id,
-            or_(
-                and_(
-                    Meeting.start_time <= meeting_data.start_time,
-                    Meeting.end_time > meeting_data.start_time
-                ),
-                and_(
-                    Meeting.start_time < meeting_data.end_time,
-                    Meeting.end_time >= meeting_data.end_time
-                ),
-                and_(
-                    Meeting.start_time >= meeting_data.start_time,
-                    Meeting.end_time <= meeting_data.end_time
-                ),
-                and_(
-                    Meeting.start_time <= meeting_data.start_time,
-                    Meeting.end_time >= meeting_data.end_time
-                )
+    query = select(
+        Meeting.title,
+        Meeting.start_time,
+        Meeting.end_time,
+        MeetingParticipant.user_id,
+        User.email
+    ).join(
+        MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id
+    ).join(
+        User, MeetingParticipant.user_id == User.id
+    ).filter(
+        MeetingParticipant.user_id.in_(all_participants),
+        or_(
+            and_(
+                Meeting.start_time <= meeting_data.start_time,
+                Meeting.end_time > meeting_data.start_time
+            ),
+            and_(
+                Meeting.start_time < meeting_data.end_time,
+                Meeting.end_time >= meeting_data.end_time
+            ),
+            and_(
+                Meeting.start_time >= meeting_data.start_time,
+                Meeting.end_time <= meeting_data.end_time
+            ),
+            and_(
+                Meeting.start_time <= meeting_data.start_time,
+                Meeting.end_time >= meeting_data.end_time
             )
         )
+    )
 
-        if exclude_meeting_id:
-            query = query.filter(Meeting.id != exclude_meeting_id)
+    if exclude_meeting_id:
+        query = query.filter(Meeting.id != exclude_meeting_id)
 
-        result = await db.execute(query)
-        conflicting_meetings = result.scalars().all()
+    result = await db.execute(query)
+    conflicts = result.all()
 
-        if conflicting_meetings:
-            user_result = await db.execute(
-                select(User).filter(User.id == participant_id)
-            )
-            user = user_result.scalar_one()
+    if not conflicts:
+        return []
 
-            conflict_times = []
-            for conflict in conflicting_meetings:
-                start_str = conflict.start_time.strftime("%d.%m.%Y %H:%M")
-                end_str = conflict.end_time.strftime("%d.%m.%Y %H:%M")
-                conflict_times.append(f"{conflict.title} ({start_str} - {end_str})")
+    conflicts_by_user = {}
+    for title, start_time, end_time, user_id, email in conflicts:
+        if user_id not in conflicts_by_user:
+            conflicts_by_user[user_id] = {"email": email, "conflicts": []}
+        start_str = start_time.strftime("%d.%m.%Y %H:%M")
+        end_str = end_time.strftime("%d.%m.%Y %H:%M")
+        conflicts_by_user[user_id]["conflicts"].append(f"{title} ({start_str} - {end_str})")
 
-            errors.append(
-                f"User {user.email} has conflicting meetings: {', '.join(conflict_times)}"
-            )
+    errors = []
+    for user_id, data in conflicts_by_user.items():
+        conflicts_list = ", ".join(data["conflicts"])
+        errors.append(f"User {data['email']} has conflicting meetings: {conflicts_list}")
 
     return errors
 
@@ -298,20 +294,14 @@ async def get_meeting(
         db: AsyncSession = Depends(get_async_session)
 ):
     result = await db.execute(
-        select(Meeting)
-        .options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team),
-            selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
-        )
-        .where(Meeting.id == meeting_id)
+        load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
     )
     meeting = result.scalar_one_or_none()
 
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    is_participant = await is_meeting_participant(db, user.id, meeting_id)
+    is_participant = any(p.user_id == user.id for p in meeting.participants)
     user_role = await get_user_team_role(db, user.id, meeting.team_id)
 
     if not is_participant and not user_role:
@@ -328,10 +318,7 @@ async def delete_meeting(
 ):
     result = await db.execute(
         select(Meeting)
-        .options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team)
-        )
+        .options(selectinload(Meeting.organizer), selectinload(Meeting.team))
         .where(Meeting.id == meeting_id)
     )
     meeting = result.scalar_one_or_none()
@@ -339,8 +326,8 @@ async def delete_meeting(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    is_organizer = meeting.organizer_id == user.id
     user_role = await get_user_team_role(db, user.id, meeting.team_id)
+    is_organizer = meeting.organizer_id == user.id
     is_team_admin = user_role == 'admin'
 
     if not (is_organizer or is_team_admin):
@@ -371,14 +358,11 @@ async def get_team_meetings(
         raise HTTPException(status_code=403, detail="You are not a member of this team")
 
     result = await db.execute(
-        select(Meeting)
-        .options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team),
-            selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
+        load_meeting_relationships(
+            select(Meeting)
+            .filter(Meeting.team_id == team_id)
+            .order_by(Meeting.start_time)
         )
-        .filter(Meeting.team_id == team_id)
-        .order_by(Meeting.start_time)
     )
     meetings = result.scalars().all()
 
@@ -391,18 +375,15 @@ async def get_upcoming_meetings(
         db: AsyncSession = Depends(get_async_session)
 ):
     result = await db.execute(
-        select(Meeting)
-        .join(MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id)
-        .options(
-            selectinload(Meeting.organizer),
-            selectinload(Meeting.team),
-            selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
+        load_meeting_relationships(
+            select(Meeting)
+            .join(MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id)
+            .filter(
+                MeetingParticipant.user_id == user.id,
+                Meeting.start_time >= datetime.utcnow()
+            )
+            .order_by(Meeting.start_time)
         )
-        .filter(
-            MeetingParticipant.user_id == user.id,
-            Meeting.start_time >= datetime.utcnow()
-        )
-        .order_by(Meeting.start_time)
     )
     meetings = result.scalars().all()
 

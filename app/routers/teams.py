@@ -5,6 +5,7 @@ from fastapi.requests import Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from app.core.auth import current_active_user
 from app.core.database import get_async_session
@@ -17,7 +18,6 @@ from app.schemas.team import (
     TeamUpdate,
     InviteUserRequest,
     JoinTeamRequest,
-    TeamMember,
 )
 from app.schemas.user import UserRead
 from app.utils.teams import (
@@ -36,42 +36,36 @@ async def get_user_teams(
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
+    from sqlalchemy.orm import selectinload
+
     result = await db.execute(
         select(Team)
-        .join(UserTeam)
+        .join(UserTeam, Team.id == UserTeam.team_id)
         .filter(UserTeam.user_id == user.id)
-    )
-    teams = result.scalars().all()
-    teams_with_members = []
-    for team in teams:
-        members_result = await db.execute(
-            select(UserTeam, User)
-            .join(User, UserTeam.user_id == User.id)
-            .filter(UserTeam.team_id == team.id)
+        .options(
+            selectinload(Team.members)
+            .selectinload(UserTeam.user)
         )
-        members_data = members_result.all()
+        .distinct()
+    )
 
-        members = [
-            TeamMember(
-                user=member.User,
-                role=member.UserTeam.role,
-                created_at=member.UserTeam.created_at
-            )
-            for member in members_data
-        ]
+    teams = result.scalars().all()
 
-        team_dict = {
-            "id": team.id,
-            "name": team.name,
-            "description": team.description,
-            "invite_code": team.invite_code,
-            "created_at": team.created_at,
-            "updated_at": team.updated_at,
-            "members": members
-        }
-        teams_with_members.append(team_dict)
+    teams_read = []
+    for team in teams:
+        members_data = []
+        for user_team in team.members:
+            member_data = {
+                "user": user_team.user,
+                "role": user_team.role,
+                "joined_at": user_team.created_at
+            }
+            members_data.append(member_data)
 
-    return teams_with_members
+        team_read = TeamRead.model_validate({**team.__dict__, "members": members_data}, from_attributes=True)
+        teams_read.append(team_read)
+
+    return teams_read
 
 
 @router.get("", response_class=HTMLResponse)
@@ -85,6 +79,12 @@ async def create_team(
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
+    if user.role != "manager" or user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Только менеджеры могут создавать команды"
+        )
+
     team = Team(
         name=team_data.name,
         description=team_data.description,
@@ -101,7 +101,6 @@ async def create_team(
 
     await db.commit()
     await db.refresh(team)
-    from sqlalchemy.orm import selectinload
     result = await db.execute(
         select(Team)
         .options(selectinload(Team.members).selectinload(UserTeam.user))

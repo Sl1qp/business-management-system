@@ -38,7 +38,7 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
             const data = await response.json();
             localStorage.setItem('access_token', data.access_token);
             alert('Вход выполнен успешно!');
-            window.location.href = '/'; // Перенаправляем на главную страницу
+            window.location.href = '/tasks'; // Перенаправляем на главную страницу
         } else {
             const error = await response.json();
             alert(`Ошибка входа: ${error.detail}`);

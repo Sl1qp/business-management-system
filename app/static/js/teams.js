@@ -22,7 +22,7 @@ async function loadTeams() {
                 teamDiv.innerHTML = `
                     <div class="team-header">
                         <h4>${team.name}</h4>
-                        <span class="team-role ${userRole}">${userRole === 'admin' ? 'Администратор' : 'Участник'}</span>
+                        <span class="team-role ${userRole}">${userRole === 'admin' ? 'Администратор' : userRole === 'manager' ? 'Менеджер' : 'Участник'}</span>
                     </div>
                     <p class="team-description">${team.description || 'Нет описания'}</p>
                     <p class="team-members">Участников: ${team.members.length}</p>
@@ -148,6 +148,25 @@ async function getCurrentUser() {
         const response = await authFetch('/auth/me');
         if (response.ok) {
             currentUser = await response.json();
+            if (currentUser.role !== 'manager') {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'info-message';
+                infoDiv.innerHTML = '<p><em>Примечание: Создавать команды могут только пользователи с ролью "Менеджер". Вы можете присоединяться к существующим командам по коду приглашения.</em></p>';
+
+                const managerActions = document.getElementById('manager-actions');
+                if (managerActions) {
+                    managerActions.parentNode.insertBefore(infoDiv, managerActions);
+                }
+            }
+
+            const managerActions = document.getElementById('manager-actions');
+            if (managerActions) {
+                if (currentUser.role === 'manager') {
+                    managerActions.style.display = 'block';
+                } else {
+                    managerActions.style.display = 'none';
+                }
+            }
         } else {
             console.error('Failed to get current user');
             window.location.href = '/auth/login';

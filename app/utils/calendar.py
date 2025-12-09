@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.task import Task, TaskStatus
@@ -18,7 +17,16 @@ async def get_user_calendar_events(
     events = []
 
     try:
-        tasks_query = select(Task).filter(
+        from sqlalchemy.orm import aliased
+
+        tasks_query = select(
+            Task.id,
+            Task.title,
+            Task.description,
+            Task.deadline,
+            Task.created_at,
+            Task.status
+        ).filter(
             Task.assignee_id == user_id,
             or_(
                 Task.deadline.between(start_date, end_date),
@@ -30,49 +38,61 @@ async def get_user_calendar_events(
         )
 
         tasks_result = await db.execute(tasks_query)
-        tasks = tasks_result.scalars().all()
+        tasks = tasks_result.all()
 
         for task in tasks:
-            event_date = task.deadline or task.created_at
+            task_id, title, description, deadline, created_at, status = task
+            event_date = deadline or created_at
             events.append({
-                'id': f"task_{task.id}",
-                'title': task.title,
-                'description': task.description,
+                'id': f"task_{task_id}",
+                'title': title,
+                'description': description,
                 'start_time': event_date,
                 'end_time': event_date + timedelta(hours=1),
                 'event_type': 'TASK',
-                'all_day': task.deadline is not None,
-                'status': task.status.value,
-                'task_id': task.id,
-                'url': f"/tasks/{task.id}",
-                'color': get_task_color(task.status),
+                'all_day': deadline is not None,
+                'status': status.value,
+                'task_id': task_id,
+                'url': f"/tasks/{task_id}",
+                'color': get_task_color(status),
                 'priority': 'medium'
             })
 
-        meetings_query = select(Meeting).join(
+        meetings_query = select(
+            Meeting.id,
+            Meeting.title,
+            Meeting.description,
+            Meeting.start_time,
+            Meeting.end_time
+        ).join(
             MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id
         ).filter(
             MeetingParticipant.user_id == user_id,
             or_(
                 Meeting.start_time.between(start_date, end_date),
-                Meeting.end_time.between(start_date, end_date)
+                Meeting.end_time.between(start_date, end_date),
+                and_(
+                    Meeting.start_time <= start_date,
+                    Meeting.end_time >= end_date
+                )
             )
-        )
+        ).distinct()
 
         meetings_result = await db.execute(meetings_query)
-        meetings = meetings_result.scalars().all()
+        meetings = meetings_result.all()
 
         for meeting in meetings:
+            meeting_id, title, description, start_time, end_time = meeting
             events.append({
-                'id': f"meeting_{meeting.id}",
-                'title': meeting.title,
-                'description': meeting.description,
-                'start_time': meeting.start_time,
-                'end_time': meeting.end_time,
+                'id': f"meeting_{meeting_id}",
+                'title': title,
+                'description': description,
+                'start_time': start_time,
+                'end_time': end_time,
                 'event_type': 'MEETING',
                 'all_day': False,
-                'meeting_id': meeting.id,
-                'url': f"/meetings/{meeting.id}",
+                'meeting_id': meeting_id,
+                'url': f"/meetings/{meeting_id}",
                 'color': '#3788d8',
                 'priority': 'high'
             })

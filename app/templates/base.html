@@ -45,13 +45,46 @@
     function updateNavigation(user) {
         const authElements = document.querySelectorAll('.auth-only');
         const unauthElements = document.querySelectorAll('.unauth-only');
+        const userInfo = document.getElementById('user-info');
+        const logoutBtn = document.getElementById('logout-btn');
 
         if (user) {
             authElements.forEach(el => el.style.display = 'block');
             unauthElements.forEach(el => el.style.display = 'none');
+
+            if (userInfo) {
+                userInfo.style.display = 'flex';
+                const userNameElement = document.getElementById('user-name');
+                const userRoleElement = document.getElementById('user-role');
+
+                if (userNameElement) {
+                    const fullName = user.first_name || user.last_name ?
+                        `${user.first_name || ''} ${user.last_name || ''}`.trim() :
+                        user.email.split('@')[0];
+                    userNameElement.textContent = fullName;
+                }
+
+                if (userRoleElement) {
+                    let roleText = user.role;
+                    if (roleText === 'manager') roleText = 'менеджер';
+                    else if (roleText === 'admin') roleText = 'администратор';
+                    else roleText = 'пользователь';
+                    userRoleElement.textContent = roleText;
+                }
+            }
+
+            if (logoutBtn) {
+                logoutBtn.style.display = 'block';
+            }
         } else {
             authElements.forEach(el => el.style.display = 'none');
             unauthElements.forEach(el => el.style.display = 'block');
+            if (userInfo) {
+                userInfo.style.display = 'none';
+            }
+            if (logoutBtn) {
+                logoutBtn.style.display = 'none';
+            }
         }
     }
 
@@ -87,7 +120,16 @@
             <li class="auth-only" style="display: none;"><a href="/meetings">Встречи</a></li>
             <li class="auth-only" style="display: none;"><a href="/calendar">Календарь</a></li>
             <li class="auth-only" style="display: none;"><a href="/evaluations">Оценки</a></li>
-            <li class="auth-only" style="display: none;"><a href="#" onclick="logout(); return false;">Выход</a></li>
+
+            <li id="user-info" class="auth-only user-info" style="display: none;">
+                <span class="user-name" id="user-name"></span>
+                <span class="user-role" id="user-role"></span>
+            </li>
+
+            <li id="logout-btn" class="auth-only" style="display: none;">
+                <a href="#" onclick="logout(); return false;" class="logout-btn">Выход</a>
+            </li>
+
             <li class="unauth-only"><a href="/auth/login">Вход</a></li>
             <li class="unauth-only"><a href="/auth/register">Регистрация</a></li>
         </ul>
