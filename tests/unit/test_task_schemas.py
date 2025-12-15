@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.schemas.task import TaskCreate, TaskUpdate, TaskStatus
 
@@ -18,7 +18,7 @@ class TestTaskCreateSchema:
 
     def test_valid_task_create(self):
         """Тест создания задачи с валидными данными"""
-        deadline = datetime.utcnow() + timedelta(days=7)
+        deadline = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7)
         data = {
             "title": "Test Task",
             "description": "Test Description",

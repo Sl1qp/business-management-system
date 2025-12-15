@@ -1,9 +1,12 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
+from app.models.team import Team
 from app.utils.teams import generate_invite_code
 from app.utils.teams import get_team_by_id
-from app.models.team import Team
 from app.utils.teams import get_user_team_role
+
 
 class TestTeamUtils:
     """Тесты утилит команд"""

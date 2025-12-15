@@ -1,8 +1,10 @@
 import pytest
-from sqlalchemy.orm import selectinload
-from app.models.team import Team, UserTeam
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.models.team import Team, UserTeam
 from app.models.user import User
+
 
 @pytest.mark.asyncio
 async def test_create_user(db_session):

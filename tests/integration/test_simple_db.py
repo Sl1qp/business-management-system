@@ -1,7 +1,8 @@
 import pytest
-from app.models.user import User
-from app.models.team import Team
 from sqlalchemy import text
+
+from app.models.team import Team
+from app.models.user import User
 
 
 @pytest.mark.integration

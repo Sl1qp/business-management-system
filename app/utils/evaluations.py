@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +6,8 @@ from sqlalchemy.future import select
 
 from app.models.evaluation import Evaluation
 from app.models.task import Task
+from app.schemas.evaluation import EvaluationStats
+from app.utils.teams import is_team_manager_or_admin
 
 
 async def get_evaluation_by_id(db: AsyncSession, evaluation_id: int):
@@ -32,8 +34,8 @@ async def get_task_evaluation(db: AsyncSession, task_id: int):
     return result.scalar_one_or_none()
 
 
-async def get_average_rating(db: AsyncSession, user_id: int, days: int = 30):
-    end_date = datetime.utcnow()
+async def get_average_rating(db: AsyncSession, user_id: int, days: int = 30) -> EvaluationStats:
+    end_date = datetime.now(timezone.utc).replace(tzinfo=None)
     start_date = end_date - timedelta(days=days)
 
     result = await db.execute(
@@ -50,13 +52,13 @@ async def get_average_rating(db: AsyncSession, user_id: int, days: int = 30):
 
     stats = result.first()
 
-    return {
-        "user_id": user_id,
-        "average_rating": float(stats.average_rating) if stats.average_rating else 0.0,
-        "period_start": start_date,
-        "period_end": end_date,
-        "total_evaluations": stats.total_evaluations
-    }
+    return EvaluationStats(
+        user_id=user_id,
+        average_rating=float(stats.average_rating) if stats.average_rating else 0.0,
+        total_evaluations=stats.total_evaluations,
+        period_start=start_date,
+        period_end=end_date
+    )
 
 
 async def can_evaluate_task(db: AsyncSession, task_id: int, evaluator_id: int):
@@ -68,5 +70,4 @@ async def can_evaluate_task(db: AsyncSession, task_id: int, evaluator_id: int):
     if not task:
         return False
 
-    from app.utils.teams import is_team_manager_or_admin
     return await is_team_manager_or_admin(db, evaluator_id, task.team_id)

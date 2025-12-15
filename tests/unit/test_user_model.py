@@ -1,10 +1,12 @@
-import pytest
-from datetime import datetime
-from sqlalchemy.orm import selectinload
-from app.models.user import User
-from app.models.team import Team, UserTeam
-from sqlalchemy import select
 import secrets
+from datetime import datetime
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.models.team import Team, UserTeam
+from app.models.user import User
 
 
 class TestUserModel:
@@ -39,7 +41,6 @@ class TestUserModel:
         assert isinstance(user.created_at, datetime)
         assert user.updated_at is not None
         assert isinstance(user.updated_at, datetime)
-
 
     @pytest.mark.asyncio
     async def test_user_relationships(self, db_session):
@@ -79,7 +80,6 @@ class TestUserModel:
         assert len(user_with_teams.teams) == 1
         assert user_with_teams.teams[0].team_id == team.id
         assert user_with_teams.teams[0].role == "member"
-
 
     @pytest.mark.asyncio
     async def test_user_role_default(self, db_session):

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,7 +15,6 @@ from app.models import UserTeam
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import MeetingCreate, MeetingRead, MeetingUpdate
-from app.utils.meetings import is_meeting_organizer
 from app.utils.teams import get_user_team_role
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -27,6 +26,108 @@ def load_meeting_relationships(query):
         selectinload(Meeting.team),
         selectinload(Meeting.participants).selectinload(MeetingParticipant.user)
     )
+
+
+async def get_meeting_with_relations(
+        meeting_id: int,
+        db: AsyncSession = Depends(get_async_session)
+) -> Meeting:
+    result = await db.execute(
+        load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
+    )
+    meeting = result.scalar_one_or_none()
+
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    return meeting
+
+
+async def require_team_membership_for_meeting(
+        meeting: Meeting = Depends(get_meeting_with_relations),
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+) -> Meeting:
+    user_role = await get_user_team_role(db, user.id, meeting.team_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="You are not a member of this meeting's team")
+
+    return meeting
+
+
+async def require_meeting_access(
+        meeting: Meeting = Depends(require_team_membership_for_meeting),
+        user: User = Depends(current_active_user)
+) -> Meeting:
+    is_participant = any(p.user_id == user.id for p in meeting.participants)
+    if not is_participant:
+        raise HTTPException(status_code=403, detail="You don't have access to this meeting")
+
+    return meeting
+
+
+async def require_meeting_organizer(
+        meeting: Meeting = Depends(get_meeting_with_relations),
+        user: User = Depends(current_active_user)
+) -> Meeting:
+    if meeting.organizer_id != user.id:
+        raise HTTPException(status_code=403, detail="Only meeting organizer can update meeting")
+
+    return meeting
+
+
+async def require_meeting_organizer_or_admin(
+        meeting: Meeting = Depends(get_meeting_with_relations),
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+) -> Meeting:
+    user_role = await get_user_team_role(db, user.id, meeting.team_id)
+    is_organizer = meeting.organizer_id == user.id
+    is_team_admin = user_role == 'admin'
+
+    if not (is_organizer or is_team_admin):
+        raise HTTPException(
+            status_code=403,
+            detail="Only meeting organizer or team admin can delete meeting"
+        )
+
+    return meeting
+
+
+async def require_team_membership_for_team_id(
+        team_id: int,
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+):
+    user_role = await get_user_team_role(db, user.id, team_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="You are not a member of this team")
+    return user_role
+
+
+async def validate_participants_in_team(
+        participant_ids: List[int],
+        team_id: int,
+        db: AsyncSession
+) -> List[int]:
+    if not participant_ids:
+        return []
+
+    participants_query = select(UserTeam.user_id).filter(
+        UserTeam.team_id == team_id,
+        UserTeam.user_id.in_(participant_ids)
+    )
+    participants_result = await db.execute(participants_query)
+    valid_participant_ids = {row[0] for row in participants_result.all()}
+
+    invalid_participants = set(participant_ids) - valid_participant_ids
+    if invalid_participants:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Users {invalid_participants} are not members of this team"
+        )
+
+    return list(valid_participant_ids)
 
 
 @router.get("", response_class=HTMLResponse)
@@ -59,7 +160,7 @@ async def get_meetings_list(
             .distinct()
         )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if filter == "upcoming":
             query = query.filter(Meeting.start_time >= now)
         elif filter == "past":
@@ -88,23 +189,14 @@ async def create_meeting(
     if meeting_data.end_time <= meeting_data.start_time:
         raise HTTPException(status_code=400, detail="End time must be after start time")
 
+    valid_participant_ids = []
     if meeting_data.participant_ids:
-        participants_query = select(UserTeam.user_id).filter(
-            UserTeam.team_id == meeting_data.team_id,
-            UserTeam.user_id.in_(meeting_data.participant_ids)
+        valid_participant_ids = await validate_participants_in_team(
+            meeting_data.participant_ids, meeting_data.team_id, db
         )
-        participants_result = await db.execute(participants_query)
-        valid_participant_ids = {row[0] for row in participants_result.all()}
-
-        invalid_participants = set(meeting_data.participant_ids) - valid_participant_ids
-        if invalid_participants:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Users {invalid_participants} are not members of this team"
-            )
 
     conflict_errors = await check_meeting_time_conflicts_optimized(
-        db, meeting_data, user.id, meeting_data.participant_ids
+        db, meeting_data, user.id, valid_participant_ids
     )
     if conflict_errors:
         raise HTTPException(
@@ -112,27 +204,34 @@ async def create_meeting(
             detail="Time conflicts detected: " + "; ".join(conflict_errors)
         )
 
-    meeting = Meeting(
-        title=meeting_data.title,
-        description=meeting_data.description,
-        start_time=meeting_data.start_time,
-        end_time=meeting_data.end_time,
-        team_id=meeting_data.team_id,
-        organizer_id=user.id
-    )
+    try:
+        meeting = Meeting(
+            title=meeting_data.title,
+            description=meeting_data.description,
+            start_time=meeting_data.start_time,
+            end_time=meeting_data.end_time,
+            team_id=meeting_data.team_id,
+            organizer_id=user.id
+        )
+        db.add(meeting)
+        await db.flush()
 
-    db.add(meeting)
-    await db.flush()
+        all_participant_ids = set(valid_participant_ids + [user.id])
 
-    all_participant_ids = set(meeting_data.participant_ids + [user.id])
+        participants = [
+            MeetingParticipant(meeting_id=meeting.id, user_id=participant_id)
+            for participant_id in all_participant_ids
+        ]
+        db.add_all(participants)
 
-    participants = [
-        MeetingParticipant(meeting_id=meeting.id, user_id=participant_id)
-        for participant_id in all_participant_ids
-    ]
-    db.add_all(participants)
+        await db.commit()
 
-    await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании встречи: {str(e)}"
+        )
 
     result = await db.execute(
         load_meeting_relationships(select(Meeting).where(Meeting.id == meeting.id))
@@ -149,9 +248,6 @@ async def update_meeting(
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if not await is_meeting_organizer(db, user.id, meeting_id):
-        raise HTTPException(status_code=403, detail="Only meeting organizer can update meeting")
-
     result = await db.execute(
         load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
     )
@@ -160,31 +256,37 @@ async def update_meeting(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    if meeting_data.title is not None:
-        meeting.title = meeting_data.title
-    if meeting_data.description is not None:
-        meeting.description = meeting_data.description
+    if meeting.organizer_id != user.id:
+        raise HTTPException(status_code=403, detail="Only meeting organizer can update meeting")
 
     start_time = meeting_data.start_time if meeting_data.start_time is not None else meeting.start_time
     end_time = meeting_data.end_time if meeting_data.end_time is not None else meeting.end_time
 
-    if meeting_data.start_time is not None:
-        meeting.start_time = meeting_data.start_time
-    if meeting_data.end_time is not None:
-        meeting.end_time = meeting_data.end_time
-
-    if meeting.end_time <= meeting.start_time:
+    if end_time <= start_time:
         raise HTTPException(status_code=400, detail="End time must be after start time")
 
-    current_participant_ids = [p.user_id for p in meeting.participants]
-
+    current_participant_ids = [p.user_id for p in meeting.participants if p.user_id != meeting.organizer_id]
     participant_ids_to_check = current_participant_ids
+
     if meeting_data.participant_ids is not None:
-        participant_ids_to_check = meeting_data.participant_ids + [user.id]
+        valid_participant_ids = await validate_participants_in_team(
+            meeting_data.participant_ids, meeting.team_id, db
+        )
+        participant_ids_to_check = valid_participant_ids
 
     if meeting_data.start_time is not None or meeting_data.end_time is not None or meeting_data.participant_ids is not None:
+        from app.schemas.meeting import MeetingCreate
+        temp_meeting_data = MeetingCreate(
+            title=meeting.title,
+            description=meeting.description,
+            start_time=start_time,
+            end_time=end_time,
+            team_id=meeting.team_id,
+            participant_ids=participant_ids_to_check
+        )
+
         conflict_errors = await check_meeting_time_conflicts_optimized(
-            db, meeting_data, user.id, participant_ids_to_check, exclude_meeting_id=meeting_id
+            db, temp_meeting_data, user.id, participant_ids_to_check, exclude_meeting_id=meeting_id
         )
         if conflict_errors:
             raise HTTPException(
@@ -192,24 +294,40 @@ async def update_meeting(
                 detail="Time conflicts detected: " + "; ".join(conflict_errors)
             )
 
-    if meeting_data.participant_ids is not None:
-        from app.models.meeting import MeetingParticipant
-        await db.execute(
-            MeetingParticipant.__table__.delete()
-            .where(MeetingParticipant.meeting_id == meeting_id)
-            .where(MeetingParticipant.user_id != user.id)
+    try:
+        if meeting_data.title is not None:
+            meeting.title = meeting_data.title
+        if meeting_data.description is not None:
+            meeting.description = meeting_data.description
+        if meeting_data.start_time is not None:
+            meeting.start_time = meeting_data.start_time
+        if meeting_data.end_time is not None:
+            meeting.end_time = meeting_data.end_time
+
+        if meeting_data.participant_ids is not None:
+            await db.execute(
+                MeetingParticipant.__table__.delete()
+                .where(MeetingParticipant.meeting_id == meeting.id)
+                .where(MeetingParticipant.user_id != meeting.organizer_id)
+            )
+
+            new_participants = [
+                MeetingParticipant(meeting_id=meeting.id, user_id=participant_id)
+                for participant_id in meeting_data.participant_ids
+                if participant_id != meeting.organizer_id
+            ]
+            if new_participants:
+                db.add_all(new_participants)
+
+        meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при обновлении встречи: {str(e)}"
         )
-
-        new_participants = [
-            MeetingParticipant(meeting_id=meeting_id, user_id=participant_id)
-            for participant_id in meeting_data.participant_ids
-            if participant_id != user.id
-        ]
-        if new_participants:
-            db.add_all(new_participants)
-
-    meeting.updated_at = datetime.utcnow()
-    await db.commit()
 
     result = await db.execute(
         load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
@@ -226,8 +344,6 @@ async def check_meeting_time_conflicts_optimized(
         participant_ids: List[int],
         exclude_meeting_id: int = None
 ) -> List[str]:
-    from app.models.meeting import Meeting, MeetingParticipant
-
     all_participants = set(participant_ids + [organizer_id])
 
     query = select(
@@ -289,18 +405,10 @@ async def check_meeting_time_conflicts_optimized(
 
 @router.get("/{meeting_id}", response_model=MeetingRead)
 async def get_meeting(
-        meeting_id: int,
+        meeting: Meeting = Depends(get_meeting_with_relations),
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
-    result = await db.execute(
-        load_meeting_relationships(select(Meeting).where(Meeting.id == meeting_id))
-    )
-    meeting = result.scalar_one_or_none()
-
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
     is_participant = any(p.user_id == user.id for p in meeting.participants)
     user_role = await get_user_team_role(db, user.id, meeting.team_id)
 
@@ -336,13 +444,21 @@ async def delete_meeting(
             detail="Only meeting organizer or team admin can delete meeting"
         )
 
-    await db.execute(
-        MeetingParticipant.__table__.delete()
-        .where(MeetingParticipant.meeting_id == meeting_id)
-    )
+    try:
+        await db.execute(
+            MeetingParticipant.__table__.delete()
+            .where(MeetingParticipant.meeting_id == meeting.id)
+        )
 
-    await db.delete(meeting)
-    await db.commit()
+        await db.delete(meeting)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении встречи: {str(e)}"
+        )
 
     return {"message": "Meeting deleted successfully"}
 
@@ -380,7 +496,7 @@ async def get_upcoming_meetings(
             .join(MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id)
             .filter(
                 MeetingParticipant.user_id == user.id,
-                Meeting.start_time >= datetime.utcnow()
+                Meeting.start_time >= datetime.now(timezone.utc).replace(tzinfo=None)
             )
             .order_by(Meeting.start_time)
         )

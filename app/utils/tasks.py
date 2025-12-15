@@ -5,13 +5,11 @@ from app.models.task import Task, TaskComment
 
 
 async def get_task_by_id(db: AsyncSession, task_id: int):
-    """Получает задачу по ID без загрузки связанных данных"""
     result = await db.execute(select(Task).filter(Task.id == task_id))
     return result.scalar_one_or_none()
 
 
 async def get_task_comments(db: AsyncSession, task_id: int):
-    """Получает комментарии задачи с авторами"""
     result = await db.execute(
         select(TaskComment)
         .join(TaskComment.author)

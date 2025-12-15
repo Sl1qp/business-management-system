@@ -1,10 +1,12 @@
-import pytest
-from sqlalchemy.orm import selectinload
-from app.models.user import User
-from app.models.team import Team, UserTeam
 import secrets
-from app.models.task import Task, TaskStatus
+
+import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.models.task import Task, TaskStatus
+from app.models.team import Team, UserTeam
+from app.models.user import User
 
 
 @pytest.mark.integration

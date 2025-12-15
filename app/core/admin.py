@@ -2,7 +2,6 @@ from sqladmin import Admin
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 
-from app.core.database import sync_engine
 from app.core.admin_models import (
     UserAdmin,
     TeamAdmin,
@@ -13,6 +12,8 @@ from app.core.admin_models import (
     MeetingParticipantAdmin,
     EvaluationAdmin,
 )
+from app.core.database import sync_engine
+
 
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:

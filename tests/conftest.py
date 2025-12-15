@@ -1,21 +1,22 @@
-import sys
-from pathlib import Path
 import asyncio
-import pytest
-import pytest_asyncio
-from datetime import datetime, timedelta
+import secrets
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
-from httpx import AsyncClient
-from app.core.database import Base
-from app.models.task import Task, TaskStatus
-from app.main import app
-from app.core.database import get_async_session
-import secrets
-from app.models.team import Team, UserTeam
 
+from app.core.database import Base
+from app.core.database import get_async_session
+from app.main import app
+from app.models.task import Task, TaskStatus
+from app.models.team import Team, UserTeam
 from app.models.user import User
 
 project_root = Path(__file__).parent.parent
@@ -171,7 +172,7 @@ async def test_task(db_session: AsyncSession, test_team, test_manager, test_user
         title="Test Task",
         description="Test task description",
         status=TaskStatus.OPEN,
-        deadline=datetime.utcnow() + timedelta(days=7),
+        deadline=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
         creator_id=test_manager.id,
         assignee_id=test_user.id,
         team_id=test_team.id

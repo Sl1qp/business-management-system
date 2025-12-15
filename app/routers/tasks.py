@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +16,6 @@ from app.models.task import Task, TaskComment
 from app.models.team import UserTeam, Team
 from app.models.user import User
 from app.schemas.task import PaginatedResponse, TaskCreate, TaskRead, TaskUpdate, TaskCommentCreate, TaskCommentRead
-from app.utils.tasks import get_task_by_id
 from app.utils.teams import is_team_manager_or_admin, get_user_team_role
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -31,14 +30,61 @@ def load_task_relationships(query):
     )
 
 
+async def get_task_with_relations(
+        task_id: int,
+        db: AsyncSession = Depends(get_async_session)
+) -> Task:
+    result = await db.execute(
+        load_task_relationships(select(Task).where(Task.id == task_id))
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return task
+
+
+async def require_team_membership_for_task(
+        task: Task = Depends(get_task_with_relations),
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+) -> Task:
+    user_role = await get_user_team_role(db, user.id, task.team_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="You are not a member of this task's team")
+
+    return task
+
+
+async def require_task_assignee_or_manager(
+        task: Task = Depends(require_team_membership_for_task),
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+) -> Task:
+    if user.id != task.assignee_id and not await is_team_manager_or_admin(db, user.id, task.team_id):
+        raise HTTPException(status_code=403, detail="You can only update your own tasks")
+
+    return task
+
+
+async def require_task_creator_or_manager(
+        task: Task = Depends(require_team_membership_for_task),
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+) -> Task:
+    if user.id != task.creator_id and not await is_team_manager_or_admin(db, user.id, task.team_id):
+        raise HTTPException(status_code=403, detail="You can only delete your own tasks")
+
+    return task
+
+
 @router.get("/my-team-tasks", response_model=List[TaskRead])
 async def get_my_team_tasks(
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
     try:
-        from sqlalchemy.orm import aliased
-
         team_subquery = (
             select(UserTeam.team_id)
             .filter(UserTeam.user_id == user.id)
@@ -77,7 +123,7 @@ async def tasks_page(
 @router.get("/list", response_model=PaginatedResponse[TaskRead])
 async def get_tasks_list(
         page: int = Query(1, ge=1, description="Номер страницы"),
-        per_page: int = Query(10, ge=1, le=100, description="Элементов на странице"),
+        per_page: int = Query(10, ge=1, le=100, description="Элементов на страницы"),
         filter: str = Query("all", description="Фильтр по статусу"),
         sort: str = Query("newest", description="Сортировка"),
         user: User = Depends(current_active_user),
@@ -143,18 +189,25 @@ async def create_task(
         if not assignee_role:
             raise HTTPException(status_code=400, detail="Assignee must be a member of this team")
 
-    task = Task(
-        title=task_data.title,
-        description=task_data.description,
-        status=task_data.status,
-        deadline=task_data.deadline,
-        creator_id=user.id,
-        assignee_id=task_data.assignee_id,
-        team_id=task_data.team_id
-    )
+    try:
+        task = Task(
+            title=task_data.title,
+            description=task_data.description,
+            status=task_data.status,
+            deadline=task_data.deadline,
+            creator_id=user.id,
+            assignee_id=task_data.assignee_id,
+            team_id=task_data.team_id
+        )
+        db.add(task)
+        await db.commit()
 
-    db.add(task)
-    await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании задачи: {str(e)}"
+        )
 
     result = await db.execute(
         load_task_relationships(select(Task).where(Task.id == task.id))
@@ -166,81 +219,63 @@ async def create_task(
 
 @router.get("/{task_id}", response_model=TaskRead)
 async def get_task(
-        task_id: int,
-        user: User = Depends(current_active_user),
-        db: AsyncSession = Depends(get_async_session)
+        task: Task = Depends(require_team_membership_for_task)
 ):
-    result = await db.execute(
-        load_task_relationships(select(Task).where(Task.id == task_id))
-    )
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    user_role = await get_user_team_role(db, user.id, task.team_id)
-    if not user_role:
-        raise HTTPException(status_code=403, detail="You are not a member of this task's team")
-
     return task
 
 
 @router.put("/{task_id}", response_model=TaskRead)
 async def update_task(
-        task_id: int,
         task_data: TaskUpdate,
-        user: User = Depends(current_active_user),
+        task: Task = Depends(require_task_assignee_or_manager),
         db: AsyncSession = Depends(get_async_session)
 ):
-    task = await get_task_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        if task_data.title is not None:
+            task.title = task_data.title
+        if task_data.description is not None:
+            task.description = task_data.description
+        if task_data.status is not None:
+            task.status = task_data.status
+        if task_data.deadline is not None:
+            task.deadline = task_data.deadline
+        if task_data.assignee_id is not None:
+            new_assignee_role = await get_user_team_role(db, task_data.assignee_id, task.team_id)
+            if not new_assignee_role:
+                raise HTTPException(status_code=400, detail="Assignee must be a team member")
+            task.assignee_id = task_data.assignee_id
 
-    user_role = await get_user_team_role(db, user.id, task.team_id)
-    if user.id != task.assignee_id and not await is_team_manager_or_admin(db, user.id, task.team_id):
-        raise HTTPException(status_code=403, detail="You can only update your own tasks")
+        task.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await db.commit()
 
-    if task_data.title is not None:
-        task.title = task_data.title
-    if task_data.description is not None:
-        task.description = task_data.description
-    if task_data.status is not None:
-        task.status = task_data.status
-    if task_data.deadline is not None:
-        task.deadline = task_data.deadline
-    if task_data.assignee_id is not None:
-        new_assignee_role = await get_user_team_role(db, task_data.assignee_id, task.team_id)
-        if not new_assignee_role:
-            raise HTTPException(status_code=400, detail="Assignee must be a team member")
-        task.assignee_id = task_data.assignee_id
+    except Exception as e:
+        await db.rollback()
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при обновлении задачи: {str(e)}"
+        )
 
-    task.updated_at = datetime.utcnow()
-    await db.commit()
-
-    result = await db.execute(
-        load_task_relationships(select(Task).where(Task.id == task_id))
-    )
-    task = result.scalar_one()
-
+    await db.refresh(task)
     return task
 
 
 @router.delete("/{task_id}")
 async def delete_task(
-        task_id: int,
-        user: User = Depends(current_active_user),
+        task: Task = Depends(require_task_creator_or_manager),
         db: AsyncSession = Depends(get_async_session)
 ):
-    task = await get_task_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        await db.delete(task)
+        await db.commit()
 
-    user_role = await get_user_team_role(db, user.id, task.team_id)
-    if user.id != task.creator_id and not await is_team_manager_or_admin(db, user.id, task.team_id):
-        raise HTTPException(status_code=403, detail="You can only delete your own tasks")
-
-    await db.delete(task)
-    await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении задачи: {str(e)}"
+        )
 
     return {"message": "Task deleted successfully"}
 
@@ -249,25 +284,26 @@ async def delete_task(
 async def add_comment(
         task_id: int,
         comment_data: TaskCommentCreate,
+        task: Task = Depends(require_team_membership_for_task),
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
-    task = await get_task_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        comment = TaskComment(
+            content=comment_data.content,
+            task_id=task_id,
+            author_id=user.id
+        )
+        db.add(comment)
+        await db.commit()
+        await db.refresh(comment)
 
-    user_role = await get_user_team_role(db, user.id, task.team_id)
-    if not user_role:
-        raise HTTPException(status_code=403, detail="You are not a member of this task's team")
-
-    comment = TaskComment(
-        content=comment_data.content,
-        task_id=task_id,
-        author_id=user.id
-    )
-    db.add(comment)
-    await db.commit()
-    await db.refresh(comment)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при добавлении комментария: {str(e)}"
+        )
 
     result = await db.execute(
         select(TaskComment)
@@ -286,22 +322,13 @@ async def add_comment(
 
 @router.get("/{task_id}/comments", response_model=List[TaskCommentRead])
 async def get_comments(
-        task_id: int,
-        user: User = Depends(current_active_user),
+        task: Task = Depends(require_team_membership_for_task),
         db: AsyncSession = Depends(get_async_session)
 ):
-    task = await get_task_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    user_role = await get_user_team_role(db, user.id, task.team_id)
-    if not user_role:
-        raise HTTPException(status_code=403, detail="You are not a member of this task's team")
-
     result = await db.execute(
         select(TaskComment)
         .options(selectinload(TaskComment.author))
-        .filter(TaskComment.task_id == task_id)
+        .filter(TaskComment.task_id == task.id)
         .order_by(TaskComment.created_at.asc())
     )
     comments = result.scalars().all()

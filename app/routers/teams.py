@@ -31,13 +31,72 @@ from app.utils.teams import (
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
+async def require_team_membership(
+        team_id: int,
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+):
+    user_role = await get_user_team_role(db, user.id, team_id)
+    if not user_role:
+        raise HTTPException(status_code=403, detail="Not a member of this team")
+    return user_role
+
+
+async def require_team_admin(
+        team_id: int,
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+):
+    if not await is_team_admin(db, user.id, team_id):
+        raise HTTPException(status_code=403, detail="Only team admin can perform this action")
+    return True
+
+
+async def require_team_manager_or_admin_dep(
+        team_id: int,
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+):
+    if not await is_team_manager_or_admin(db, user.id, team_id):
+        raise HTTPException(status_code=403, detail="Only team managers or admins can perform this action")
+    return True
+
+
+async def get_team_with_members(
+        team_id: int,
+        db: AsyncSession = Depends(get_async_session)
+) -> Team:
+    result = await db.execute(
+        select(Team)
+        .options(selectinload(Team.members).selectinload(UserTeam.user))
+        .where(Team.id == team_id)
+    )
+    team = result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return team
+
+
+async def get_team_for_admin(
+        team_id: int,
+        user: User = Depends(current_active_user),
+        db: AsyncSession = Depends(get_async_session)
+) -> Team:
+    team = await get_team_by_id(db, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    if not await is_team_admin(db, user.id, team_id):
+        raise HTTPException(status_code=403, detail="Only team admin can perform this action")
+
+    return team
+
+
 @router.get("/list", response_model=List[TeamRead])
 async def get_user_teams(
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
-    from sqlalchemy.orm import selectinload
-
     result = await db.execute(
         select(Team)
         .join(UserTeam, Team.id == UserTeam.team_id)
@@ -79,78 +138,53 @@ async def create_team(
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if user.role != "manager" or user.role != "admin":
+    if user.role != "manager" and user.role != "admin":
         raise HTTPException(
             status_code=403,
             detail="Только менеджеры могут создавать команды"
         )
 
-    team = Team(
-        name=team_data.name,
-        description=team_data.description,
-        invite_code=generate_invite_code()
-    )
-    db.add(team)
-    await db.flush()
-    user_team = UserTeam(
-        user_id=user.id,
-        team_id=team.id,
-        role="admin"
-    )
-    db.add(user_team)
+    try:
+        team = Team(
+            name=team_data.name,
+            description=team_data.description,
+            invite_code=generate_invite_code()
+        )
+        db.add(team)
+        await db.flush()
 
-    await db.commit()
-    await db.refresh(team)
+        user_team = UserTeam(
+            user_id=user.id,
+            team_id=team.id,
+            role="admin"
+        )
+        db.add(user_team)
+        await db.commit()
+
+        await db.refresh(team)
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании команды: {str(e)}"
+        )
+
     result = await db.execute(
         select(Team)
         .options(selectinload(Team.members).selectinload(UserTeam.user))
         .where(Team.id == team.id)
     )
     team = result.scalar_one()
-    team_dict = {
-        "id": team.id,
-        "name": team.name,
-        "description": team.description,
-        "invite_code": team.invite_code,
-        "created_at": team.created_at,
-        "updated_at": team.updated_at,
-        "members": [
-            {
-                "user": {
-                    "id": member.user.id,
-                    "email": member.user.email,
-                    "first_name": member.user.first_name,
-                    "last_name": member.user.last_name
-                },
-                "role": member.role,
-                "created_at": member.created_at
-            }
-            for member in team.members
-        ]
-    }
 
-    return team_dict
+    return TeamRead.model_validate(team, from_attributes=True)
 
 
 @router.get("/{team_id}", response_model=TeamRead)
 async def get_team(
-        team_id: int,
-        user: User = Depends(current_active_user),
-        db: AsyncSession = Depends(get_async_session)
+        team: Team = Depends(get_team_with_members),
+        user_role: str = Depends(require_team_membership),
 ):
-    from sqlalchemy.orm import selectinload
-    result = await db.execute(
-        select(Team)
-        .options(selectinload(Team.members).selectinload(UserTeam.user))
-        .where(Team.id == team_id)
-    )
-    team = result.scalar_one_or_none()
-
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    user_role = await get_user_team_role(db, user.id, team_id)
-    if not user_role:
-        raise HTTPException(status_code=403, detail="Not a member of this team")
     team_dict = {
         "id": team.id,
         "name": team.name,
@@ -180,41 +214,43 @@ async def get_team(
 async def update_team(
         team_id: int,
         team_data: TeamUpdate,
-        user: User = Depends(current_active_user),
+        team: Team = Depends(get_team_for_admin),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if not await is_team_admin(db, user.id, team_id):
-        raise HTTPException(status_code=403, detail="Only team admin can update team")
+    try:
+        if team_data.name is not None:
+            team.name = team_data.name
+        if team_data.description is not None:
+            team.description = team_data.description
 
-    team = await get_team_by_id(db, team_id)
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    if team_data.name is not None:
-        team.name = team_data.name
-    if team_data.description is not None:
-        team.description = team_data.description
+        await db.commit()
+        await db.refresh(team)
 
-    await db.commit()
-    await db.refresh(team)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при обновлении команды: {str(e)}"
+        )
 
     return team
 
 
 @router.delete("/{team_id}")
 async def delete_team(
-        team_id: int,
-        user: User = Depends(current_active_user),
+        team: Team = Depends(get_team_for_admin),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if not await is_team_admin(db, user.id, team_id):
-        raise HTTPException(status_code=403, detail="Only team admin can delete team")
+    try:
+        await db.delete(team)
+        await db.commit()
 
-    team = await get_team_by_id(db, team_id)
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-
-    await db.delete(team)
-    await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении команды: {str(e)}"
+        )
 
     return {"message": "Team deleted successfully"}
 
@@ -222,15 +258,9 @@ async def delete_team(
 @router.get("/{team_id}/members", response_model=List[UserRead])
 async def get_team_members(
         team_id: int,
-        user: User = Depends(current_active_user),
+        _: str = Depends(require_team_membership),
         db: AsyncSession = Depends(get_async_session)
 ):
-    user_team = await db.execute(
-        select(UserTeam)
-        .filter(UserTeam.team_id == team_id, UserTeam.user_id == user.id)
-    )
-    if not user_team.scalar_one_or_none():
-        raise HTTPException(status_code=403, detail="Вы не являетесь участником этой команды")
     result = await db.execute(
         select(User)
         .join(UserTeam, User.id == UserTeam.user_id)
@@ -244,26 +274,34 @@ async def get_team_members(
 async def invite_user(
         team_id: int,
         invite_data: InviteUserRequest,
-        user: User = Depends(current_active_user),
+        _: bool = Depends(require_team_manager_or_admin_dep),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if not await is_team_manager_or_admin(db, user.id, team_id):
-        raise HTTPException(status_code=403, detail="Only team managers or admins can invite users")
     result = await db.execute(select(User).filter(User.email == invite_data.email))
     invited_user = result.scalar_one_or_none()
 
     if not invited_user:
         raise HTTPException(status_code=404, detail="User not found")
+
     existing_membership = await get_user_team_role(db, invited_user.id, team_id)
     if existing_membership:
         raise HTTPException(status_code=400, detail="User is already a member of this team")
-    user_team = UserTeam(
-        user_id=invited_user.id,
-        team_id=team_id,
-        role=invite_data.role
-    )
-    db.add(user_team)
-    await db.commit()
+
+    try:
+        user_team = UserTeam(
+            user_id=invited_user.id,
+            team_id=team_id,
+            role=invite_data.role
+        )
+        db.add(user_team)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при приглашении пользователя: {str(e)}"
+        )
 
     return {"message": f"User {invited_user.email} added to team as {invite_data.role}"}
 
@@ -279,16 +317,26 @@ async def join_team(
 
     if not team:
         raise HTTPException(status_code=404, detail="Invalid invite code")
+
     existing_membership = await get_user_team_role(db, user.id, team.id)
     if existing_membership:
         raise HTTPException(status_code=400, detail="You are already a member of this team")
-    user_team = UserTeam(
-        user_id=user.id,
-        team_id=team.id,
-        role="member"
-    )
-    db.add(user_team)
-    await db.commit()
+
+    try:
+        user_team = UserTeam(
+            user_id=user.id,
+            team_id=team.id,
+            role="member"
+        )
+        db.add(user_team)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при присоединении к команде: {str(e)}"
+        )
 
     return {"message": f"Joined team {team.name} successfully"}
 
@@ -297,13 +345,13 @@ async def join_team(
 async def remove_member(
         team_id: int,
         user_id: int,
+        _: bool = Depends(require_team_manager_or_admin_dep),
         user: User = Depends(current_active_user),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if not await is_team_manager_or_admin(db, user.id, team_id):
-        raise HTTPException(status_code=403, detail="Only team managers or admins can remove members")
     if user.id == user_id:
         raise HTTPException(status_code=400, detail="Cannot remove yourself from team")
+
     result = await db.execute(
         select(UserTeam).filter(
             UserTeam.user_id == user_id,
@@ -314,8 +362,17 @@ async def remove_member(
 
     if not user_team:
         raise HTTPException(status_code=404, detail="User is not a member of this team")
-    await db.delete(user_team)
-    await db.commit()
+
+    try:
+        await db.delete(user_team)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении участника из команды: {str(e)}"
+        )
 
     return {"message": "User removed from team successfully"}
 
@@ -323,12 +380,9 @@ async def remove_member(
 @router.get("/{team_id}/invite-code")
 async def get_invite_code(
         team_id: int,
-        user: User = Depends(current_active_user),
+        _: bool = Depends(require_team_admin),
         db: AsyncSession = Depends(get_async_session)
 ):
-    if not await is_team_admin(db, user.id, team_id):
-        raise HTTPException(status_code=403, detail="Only team admin can view invite code")
-
     result = await db.execute(select(Team).filter(Team.id == team_id))
     team = result.scalar_one_or_none()
 
